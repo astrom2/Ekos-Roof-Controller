@@ -1,0 +1,429 @@
+# =====================================================================
+#  Jarnan Observatory - roll-off roof controller
+#  Wemos D1 mini (ESP8266) + 2-relay module (SRD-05VDC-SL-C)
+#
+#  Wiring (see esp8266_roof_wiring.png):
+#    D1 (GPIO5) -> IN1  = relay 1 (COM1 white, NO1 blue)
+#    D2 (GPIO4) -> IN2  = relay 2 (NO2 brown)
+#    Which relay opens is set on the web page: "Swap Directions".
+#    One wire pair opens, the other closes; a second touch = STOP,
+#    a third touch = continue in the same direction.
+#    Jumper NC1 -> COM2 (hardware interlock - brown and blue never meet)
+#    Relay board jumpers on HIGH  (GPIO high = relay on)
+#    5V -> DC+   G -> DC-
+#    RXB6 433 MHz receiver: VCC -> 3V3, GND -> G, DATA -> D5 (GPIO14)
+#
+#  Each command is a 1-second "touch" of the white wire.
+#  The ESP itself switches the relay off, even if Wi-Fi drops.
+#
+#  Local HTTP API (used by the Ekos scripts):
+#    curl -u user:pass -X POST "http://<IP>/button/Roof%20Open/press"
+#    curl -u user:pass -X POST "http://<IP>/button/Roof%20Close/press"
+#    curl -u user:pass -X POST "http://<IP>/button/Roof%20Stop/press"
+# =====================================================================
+
+substitutions:
+  pulse: 1s              # length of one "touch"
+  travel_s: "28.0"       # measured full travel time (s)
+  margin_s: "2.0"        # extra time before a move counts as finished
+
+esphome:
+  name: roof-controller
+  friendly_name: Roof Controller
+  includes:
+    - roof_pos.h         # position estimate helpers (same folder)
+  on_boot:
+    - priority: 800      # as early as possible: make sure both relays are off
+      then:
+        - switch.turn_off: relay_d1
+        - switch.turn_off: relay_d2
+    - priority: -100     # after the saved position is loaded from flash
+      then:
+        - lambda: |-
+            // If the ESP restarted during a move, the motor kept going on its own
+            // (it only needs the 1 s touch), so finish that move in the estimate.
+            if (id(g_dir) > 0) id(g_pos) = ${travel_s};
+            if (id(g_dir) < 0) id(g_pos) = 0.0f;
+            id(g_dir) = 0;
+            ESP_LOGI("roof", "boot: position %.1f s of ${travel_s} (known=%d)", id(g_pos), id(g_known));
+
+preferences:
+  flash_write_interval: 5s   # save the roof position soon after every change
+esp8266:
+  board: d1_mini
+  restore_from_flash: true   # keeps the "Swap Directions" setting after a power cut
+
+logger:
+  logs:
+    debug: WARN
+    text_sensor: WARN   # don't print the status every 2 s
+    sensor: WARN
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Fallback hotspot if the Wi-Fi is not found
+  ap:
+    ssid: "Roof-Controller-Setup"
+    password: !secret ap_password
+
+captive_portal:
+
+# Home Assistant connection (optional - harmless if HA is not used)
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+  - platform: web_server     # firmware upload from the web page
+
+# Local web page (custom Arabic page stored inside the ESP) + REST API
+web_server:
+  port: 80
+  version: 3
+  js_url: ""                  # don't load the default page from the internet
+  js_include: "www/roof-ui.js"
+  auth:
+    username: !secret web_user
+    password: !secret web_password
+
+globals:
+  # roof position in seconds of travel: 0 = closed, ${travel_s} = open
+  - id: g_pos
+    type: float
+    restore_value: yes
+    initial_value: '0.0'
+  - id: g_dir            # +1 opening, -1 closing, 0 not moving
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  - id: g_known          # false until the first full move or a "Mark" button
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+  - id: g_t0             # millis() when the current move started
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+# --------------------------------------------------------------- relays
+# relay_d1 = D1 (GPIO5) -> IN1 -> relay 1 (COM1 white, NO1 blue)
+# relay_d2 = D2 (GPIO4) -> IN2 -> relay 2 (NO2 brown, through NC1 -> COM2)
+# Which one opens is chosen by "Swap Directions" (web page, saved in flash):
+#   OFF: OPEN = relay 1 (D1),  CLOSE = relay 2 (D2)
+#   ON : OPEN = relay 2 (D2),  CLOSE = relay 1 (D1)
+switch:
+  - platform: gpio
+    id: relay_d1
+    pin: GPIO5           # D1
+    restore_mode: ALWAYS_OFF
+    internal: true
+    interlock: [relay_d2]
+    interlock_wait_time: 300ms
+    on_turn_on:
+      - delay: ${pulse}
+      - switch.turn_off: relay_d1
+
+  - platform: gpio
+    id: relay_d2
+    pin: GPIO4           # D2
+    restore_mode: ALWAYS_OFF
+    internal: true
+    interlock: [relay_d1]
+    interlock_wait_time: 300ms
+    on_turn_on:
+      - delay: ${pulse}
+      - switch.turn_off: relay_d2
+
+  - platform: template
+    id: remote_enabled
+    name: "Remote Enabled"
+    icon: mdi:remote
+    optimistic: true
+    restore_mode: ALWAYS_OFF     # remote is OFF again after every restart / power cut
+
+  - platform: template
+    id: swap_dir
+    name: "Swap Directions"
+    icon: mdi:swap-horizontal
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: config
+    on_turn_on:
+      - logger.log: "Directions swapped: OPEN = relay 2 (D2), CLOSE = relay 1 (D1)"
+    on_turn_off:
+      - logger.log: "Directions normal: OPEN = relay 1 (D1), CLOSE = relay 2 (D2)"
+
+# one "touch" on the open wire / the close wire
+script:
+  - id: touch_open_wire
+    mode: single
+    then:
+      - if:
+          condition:
+            switch.is_off: swap_dir
+          then:
+            - switch.turn_off: relay_d2
+            - delay: 300ms
+            - switch.turn_on: relay_d1
+          else:
+            - switch.turn_off: relay_d1
+            - delay: 300ms
+            - switch.turn_on: relay_d2
+  - id: touch_close_wire
+    mode: single
+    then:
+      - if:
+          condition:
+            switch.is_off: swap_dir
+          then:
+            - switch.turn_off: relay_d1
+            - delay: 300ms
+            - switch.turn_on: relay_d2
+          else:
+            - switch.turn_off: relay_d2
+            - delay: 300ms
+            - switch.turn_on: relay_d1
+
+# --------------------------------------------------------------- commands
+button:
+  # OPEN: ignored while opening or when already fully open.
+  # From a stopped / half-open roof it continues opening.
+  - platform: template
+    id: roof_open
+    name: "Roof Open"
+    icon: mdi:arrow-expand-horizontal
+    on_press:
+      - if:
+          condition:
+            lambda: |-
+              uint32_t now = millis();
+              bool mv = roof::moving(id(g_pos), id(g_dir), id(g_t0), now, ${travel_s}, ${margin_s});
+              if (mv && id(g_dir) > 0) return true;                                   // opening
+              if (!mv && id(g_known) && id(g_pos) >= ${travel_s} - 0.5f) return true;  // open
+              return false;
+          then:
+            - logger.log: "OPEN ignored: roof is already open / opening (wrong? use Mark Roof Closed)"
+          else:
+            - script.execute: touch_open_wire
+            - lambda: |-
+                uint32_t now = millis();
+                float p = roof::current(id(g_pos), id(g_dir), id(g_t0), now, ${travel_s});
+                if (!id(g_known) && id(g_dir) == 0) p = 0.0f;   // unknown: assume a full travel
+                id(g_pos) = p; id(g_dir) = 1; id(g_t0) = now;
+                ESP_LOGI("roof", "OPEN pulse (from %.1f s, %.1f s to go)", p, ${travel_s} - p);
+
+  - platform: template
+    id: roof_close
+    name: "Roof Close"
+    icon: mdi:arrow-collapse-horizontal
+    on_press:
+      - if:
+          condition:
+            lambda: |-
+              uint32_t now = millis();
+              bool mv = roof::moving(id(g_pos), id(g_dir), id(g_t0), now, ${travel_s}, ${margin_s});
+              if (mv && id(g_dir) < 0) return true;                       // closing
+              if (!mv && id(g_known) && id(g_pos) <= 0.5f) return true;    // closed
+              return false;
+          then:
+            - logger.log: "CLOSE ignored: roof is already closed / closing (wrong? use Mark Roof Open)"
+          else:
+            - script.execute: touch_close_wire
+            - lambda: |-
+                uint32_t now = millis();
+                float p = roof::current(id(g_pos), id(g_dir), id(g_t0), now, ${travel_s});
+                if (!id(g_known) && id(g_dir) == 0) p = ${travel_s};   // unknown: assume a full travel
+                id(g_pos) = p; id(g_dir) = -1; id(g_t0) = now;
+                ESP_LOGI("roof", "CLOSE pulse (from %.1f s, %.1f s to go)", p, p);
+
+  # STOP = touch the SAME wire again, only while the roof is moving.
+  # The position is frozen where it stopped.
+  - platform: template
+    id: roof_stop
+    name: "Roof Stop"
+    icon: mdi:stop
+    on_press:
+      - if:
+          condition:
+            lambda: 'return roof::moving(id(g_pos), id(g_dir), id(g_t0), millis(), ${travel_s}, ${margin_s});'
+          then:
+            - if:
+                condition:
+                  lambda: 'return id(g_dir) > 0;'
+                then:
+                  - script.execute: touch_open_wire
+                else:
+                  - script.execute: touch_close_wire
+            - lambda: |-
+                float p = roof::current(id(g_pos), id(g_dir), id(g_t0), millis(), ${travel_s});
+                ESP_LOGI("roof", "STOP pulse at %.1f s of ${travel_s}", p);
+                id(g_pos) = p; id(g_dir) = 0;
+          else:
+            - logger.log: "STOP ignored: roof is not moving"
+
+  - platform: restart
+    name: "Roof Controller Restart"
+
+  # Correct the remembered position WITHOUT moving anything.
+  - platform: template
+    name: "Mark Roof Open"
+    entity_category: config
+    on_press:
+      - lambda: |-
+          id(g_pos) = ${travel_s}; id(g_dir) = 0; id(g_known) = true;
+          ESP_LOGI("roof", "state corrected: OPEN (no relay touched)");
+  - platform: template
+    name: "Mark Roof Closed"
+    entity_category: config
+    on_press:
+      - lambda: |-
+          id(g_pos) = 0.0f; id(g_dir) = 0; id(g_known) = true;
+          ESP_LOGI("roof", "state corrected: CLOSED (no relay touched)");
+
+# finish a move in the estimate once its time is over
+interval:
+  - interval: 500ms
+    then:
+      - lambda: |-
+          if (id(g_dir) != 0 &&
+              !roof::moving(id(g_pos), id(g_dir), id(g_t0), millis(), ${travel_s}, ${margin_s})) {
+            bool full = (id(g_dir) > 0 && id(g_pos) <= 0.5f) || (id(g_dir) < 0 && id(g_pos) >= ${travel_s} - 0.5f);
+            id(g_pos) = id(g_dir) > 0 ? ${travel_s} : 0.0f;
+            id(g_dir) = 0;
+            id(g_known) = true;
+            ESP_LOGI("roof", "move finished: roof %s%s", id(g_pos) > 0 ? "OPEN" : "CLOSED", full ? " (full travel)" : "");
+          }
+
+# --------------------------------------------------------------- 433 MHz remote
+# Remote: EV1527 fixed code, address 0x36F27 (captured with rtl_433).
+# Every press sends the same 24-bit code 6-7 times; the binary sensors below
+# turn that into ONE action per press (a second touch would mean STOP!).
+# The remote only works while "Remote Enabled" is ON (switch on the web page),
+# so a recorded/replayed signal can't open the roof while you are away.
+# "Remote Enabled" is OFF again after every power loss.
+remote_receiver:
+  pin: GPIO14            # D5
+  dump: rc_switch        # every received code is printed in the log
+  tolerance: 50%
+  filter: 250us
+  idle: 4ms
+  buffer_size: 2kb
+
+binary_sensor:
+  - platform: remote_receiver
+    id: rf_key_e
+    internal: true
+    rc_switch_raw:
+      code: '001101101111001001111110'   # key 1110 (seen)
+      protocol: 1
+    filters:
+      - delayed_off: 600ms
+    on_press:
+      - logger.log: "Remote key E (1110)"
+      - if:
+          condition:
+            switch.is_on: remote_enabled
+          then:
+            - button.press: roof_open
+          else:
+            - logger.log: "Remote ignored: remote is disabled"
+
+  - platform: remote_receiver
+    id: rf_key_d
+    internal: true
+    rc_switch_raw:
+      code: '001101101111001001111101'   # key 1101 (seen)
+      protocol: 1
+    filters:
+      - delayed_off: 600ms
+    on_press:
+      - logger.log: "Remote key D (1101)"
+      - if:
+          condition:
+            switch.is_on: remote_enabled
+          then:
+            - button.press: roof_close
+          else:
+            - logger.log: "Remote ignored: remote is disabled"
+
+  - platform: remote_receiver
+    id: rf_key_b
+    internal: true
+    rc_switch_raw:
+      code: '001101101111001001111011'   # key 1011 (expected 3rd button - check log)
+      protocol: 1
+    filters:
+      - delayed_off: 600ms
+    on_press:
+      - logger.log: "Remote key B (1011)"
+      - if:
+          condition:
+            switch.is_on: remote_enabled
+          then:
+            - button.press: roof_stop
+          else:
+            - logger.log: "Remote ignored: remote is disabled"
+
+  - platform: remote_receiver
+    id: rf_key_7
+    internal: true
+    rc_switch_raw:
+      code: '001101101111001001110111'   # key 0111 (expected 4th button - spare)
+      protocol: 1
+    filters:
+      - delayed_off: 600ms
+    on_press:
+      - logger.log: "Remote key 7 (0111) - spare, no action yet"
+
+# --------------------------------------------------------------- status
+debug:
+  update_interval: 60s
+
+sensor:
+  - platform: debug
+    free:
+      name: "Roof Controller Free Memory"
+  - platform: wifi_signal
+    name: "Roof Controller WiFi"
+    update_interval: 60s
+  - platform: uptime
+    name: "Roof Controller Uptime"
+  - platform: template
+    name: "Roof Position"          # 0 % = closed, 100 % = open (time estimate)
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    update_interval: 500ms
+    lambda: |-
+      return roof::current(id(g_pos), id(g_dir), id(g_t0), millis(), ${travel_s}) / ${travel_s} * 100.0f;
+    filters:
+      - delta: 1.0
+  - platform: template
+    name: "Roof Travel Left"
+    unit_of_measurement: s
+    accuracy_decimals: 0
+    update_interval: 1s
+    lambda: |-
+      if (!roof::moving(id(g_pos), id(g_dir), id(g_t0), millis(), ${travel_s}, ${margin_s})) return 0.0f;
+      return roof::left(id(g_pos), id(g_dir), id(g_t0), millis(), ${travel_s});
+    filters:
+      - delta: 0.9
+
+# estimated from the travel time (the camera / Ekos stay the real check)
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: "Roof Controller Last Reset"
+  - platform: template
+    name: "Roof State"
+    update_interval: 1s
+    lambda: |-
+      uint32_t now = millis();
+      if (roof::moving(id(g_pos), id(g_dir), id(g_t0), now, ${travel_s}, ${margin_s}))
+        return {id(g_dir) > 0 ? "opening" : "closing"};
+      if (!id(g_known)) return {"unknown"};
+      if (id(g_pos) >= ${travel_s} - 0.5f) return {"open"};
+      if (id(g_pos) <= 0.5f) return {"closed"};
+      return {"stopped"};
