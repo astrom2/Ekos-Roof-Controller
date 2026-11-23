@@ -56,9 +56,9 @@ ESP_PASS = "..."               # نفس web_password في secrets.yaml
 STATUS_SOURCE = "esp"          # "esp" أو "camera"
 ```
 
-**`STATUS_SOURCE`: من يؤكد لـ Ekos أن السقف مفتوح؟**
-- **`"esp"`:** الموقع المحسوب بالوقت في الـ ESP. يعمل فوراً، لكن لو علق السقف يظنه Ekos مفتوحاً.
-- **`"camera"`:** الكاميرا يجب أن **ترى** السقف مفتوحاً. أكثر أماناً، ويحتاج معايرة (الخطوة 9).
+**من يؤكد لـ Ekos أن السقف مفتوح؟ الإعداد `STATUS_SOURCE`:**
+- **القيمة `"esp"`:** الموقع المحسوب بالوقت في الـ ESP. يعمل فوراً، لكن لو علق السقف يظنه Ekos مفتوحاً.
+- **القيمة `"camera"`:** الكاميرا يجب أن **ترى** السقف مفتوحاً. أكثر أماناً، ويحتاج معايرة (الخطوة 9).
 
 ## 4) اختبار من Terminal (قبل Ekos)
 
@@ -72,24 +72,24 @@ python3 ~/roof/roof_calibrate.py esp-close
 
 ## 5) إعداد Dome Scripting Gateway
 
-1. **Profile Editor**: في خانة **Dome** اختر **Dome Scripting Gateway**، واحفظ وشغّل البروفايل.
-2. **INDI Control Panel ← Dome Scripting Gateway ← Options**:
-   - **Folder:** اضغط ثلاث مرات على الخانة **اليمنى** لتحديد النص، واكتب `/home/stellarmate/roof/scripts`، ثم اضغط زر **Set** الكبير المقابل لقائمة السكربتات. تأكد أن **الخانة الوسطى** تغيّرت.
+1. في **Profile Editor**: اختر **Dome Scripting Gateway** في خانة **Dome**، واحفظ وشغّل البروفايل.
+2. افتح **INDI Control Panel → Dome Scripting Gateway → Options**:
+   - خانة **Folder:** اضغط ثلاث مرات على الخانة **اليمنى** لتحديد النص، واكتب `/home/stellarmate/roof/scripts`، ثم اضغط زر **Set** الكبير المقابل لقائمة السكربتات. تأكد أن **الخانة الوسطى** تغيّرت.
    - لا تغيّر أسماء السكربتات.
-   - **Type:** Roll off
-   - **Mount Policy:** Mount locks
-   - **Configuration:** Save
+   - خانة **Type:** اختر Roll off
+   - خانة **Mount Policy:** اختر Mount locks
+   - من **Configuration** اضغط Save
 3. أوقف البروفايل وشغّله من جديد، فبعض الخيارات لا تُطبَّق إلا بعد إعادة التشغيل.
 
 ## 6) إعداد التلسكوب (EQMod)
 
-1. **EQMod Mount ← Options**:
-   - **Dome Policy:** Dome locks
+1. افتح **EQMod Mount → Options**:
+   - خانة **Dome Policy:** اختر Dome locks
    - تأكد أن خانة **DOME** في Snoop devices = `Dome Scripting Gateway`
-   - **Configuration:** Save
+   - من **Configuration** اضغط Save
 2. **وضع Park** (مرة واحدة، والتلسكوب في وضع الراحة):
-   - **Site Management ← Park Options ← Current**، ثم **Write Data**.
-   - ثم **Main Control ← Park**. التلسكوب لن يتحرك، فقط تصير حالته Parked.
+   - من **Site Management → Park Options** اضغط **Current**، ثم **Write Data**.
+   - ثم من **Main Control** اضغط **Park**. التلسكوب لن يتحرك، فقط تصير حالته Parked.
 
 > **مهم:** لا تضغط Park قبل تسجيل الوضع الحالي، وإلا ذهب التلسكوب إلى وضع Park قديم وقد يصطدم بالسقف.
 
@@ -108,8 +108,8 @@ python3 ~/roof/roof_calibrate.py esp-close
 ## 8) الـ Scheduler
 
 في **Observatory Startup / Shutdown Procedure** مجموعات جاهزة تنفّذ الترتيب الصحيح تلقائياً:
-- **البدء:** Unpark Dome ← Unpark Mount
-- **الإنهاء:** Park Mount ← Park Dome
+- **البدء:** Unpark Dome → Unpark Mount
+- **الإنهاء:** Park Mount → Park Dome
 
 > قبل البدء، يتأكد الـ Scheduler أن **كل أجهزة البروفايل متصلة**. جهاز مفصول، كالفوكسر مثلاً، يوقفه برسالة `One or more INDI devices timed out`. وصّله أو احذفه من البروفايل.
 

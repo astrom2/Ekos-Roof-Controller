@@ -6,20 +6,20 @@
 
 ## 1) ما تحتاجه
 
-- Wemos D1 mini، وكيبل USB **ينقل بيانات**. بعض كيبلات الشحن لا تنقل بيانات.
+- لوحة Wemos D1 mini، وكيبل USB **ينقل بيانات**. بعض كيبلات الشحن لا تنقل بيانات.
 - كمبيوتر Mac أو Windows أو Linux، فيه **Python 3.10** أو أحدث.
 - الواي فاي الذي سيتصل به الـ ESP في المرصد (2.4GHz).
 
 ## 2) تثبيت ESPHome
 
-**Mac** (في Terminal):
+**على Mac** (في Terminal):
 ```bash
 python3 -m pip install --user esphome
 esphome version
 ```
 لو ظهر `command not found`، استخدم `python3 -m esphome` بدل `esphome` في كل الأوامر التالية.
 
-**Windows:**
+**على Windows:**
 1. ثبّت Python من python.org، وضع علامة **Add Python to PATH** أثناء التثبيت.
 2. افتح PowerShell واكتب:
    ```powershell
@@ -27,7 +27,7 @@ esphome version
    esphome version
    ```
 
-**Linux:**
+**على Linux:**
 ```bash
 pip3 install --user esphome
 ```
@@ -35,10 +35,10 @@ pip3 install --user esphome
 ## 3) تنزيل المشروع
 
 ```bash
-git clone https://github.com/<user>/ekos-roof-controller.git
+git clone https://github.com/astrom2/Ekos-Roof-Controller.git ekos-roof-controller
 cd ekos-roof-controller/esphome
 ```
-أو نزّله من زر **Code ← Download ZIP**. المهم أن يكون داخل مجلد `esphome`:
+أو نزّله من زر **Code → Download ZIP**. المهم أن يكون داخل مجلد `esphome`:
 ```
 esphome/
 ├── roof-controller.yaml
@@ -64,7 +64,7 @@ cp secrets.example.yaml secrets.yaml
 | `ota_password` | كلمة سر التحديث عبر الشبكة |
 | `web_user` / `web_password` | دخول الصفحة، وهي **نفسها** التي تكتبها في سكربتات Ekos |
 
-> `secrets.yaml` لا يُرفع إلى GitHub (موجود في `.gitignore`)، فاحتفظ بنسخة منه.
+> ملف `secrets.yaml` لا يُرفع إلى GitHub (موجود في `.gitignore`)، فاحتفظ بنسخة منه.
 
 ## 5) ضبط مدة حركة سقفك
 
@@ -85,8 +85,8 @@ substitutions:
    ```
 3. أول مرة يستغرق البناء **5 إلى 10 دقائق**، لأنه ينزّل أدوات ESP8266. بعدها يصير أسرع.
 4. يسألك عن طريقة الرفع، فاختر منفذ USB:
-   - Mac: `/dev/cu.usbserial-xxxx` أو `/dev/cu.wchusbserial-xxxx`
-   - Windows: `COM3` أو ما يشبهه
+   - في Mac: `/dev/cu.usbserial-xxxx` أو `/dev/cu.wchusbserial-xxxx`
+   - في Windows: `COM3` أو ما يشبهه
 5. بعد الرفع تظهر سجلات الـ ESP. ابحث عن سطر مثل `IP Address: 192.168.100.115`. للخروج اضغط **Ctrl+C**، والـ ESP يبقى يعمل.
 
 > **لا يظهر منفذ USB؟** الـ D1 mini يستخدم شريحة **CH340**. ثبّت تعريفها من موقع الشركة المصنعة (WCH)، وأعد توصيل الكيبل، وجرّب كيبلاً آخر.
